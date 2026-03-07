@@ -1,0 +1,132 @@
+# Reference: https://github.com/i3/i3/blob/next/etc/config
+
+# You can use it to add commands that run after login to macOS user session.
+# 'start-at-login' needs to be 'true' for 'after-login-command' to work
+# Available commands: https://nikitabobko.github.io/AeroSpace/commands
+after-login-command = []
+
+# You can use it to add commands that run after AeroSpace startup.
+# 'after-startup-command' is run after 'after-login-command'
+# Available commands : https://nikitabobko.github.io/AeroSpace/commands
+after-startup-command = [
+    # JankyBorders has a built-in detection of already running process,
+    # so it won't be run twice on AeroSpace restart
+    'exec-and-forget /opt/homebrew/opt/sketchybar/bin/sketchybar',
+    # 'exec-and-forget /opt/homebrew/opt/borders/bin/borders active_color="glow(0xd9b4befe)" inactive_color=0x20494d64 width=4.0'
+]
+
+exec-on-workspace-change = [
+    '/bin/bash',
+    '-c',
+    '/opt/homebrew/opt/sketchybar/bin/sketchybar --trigger aerospace_workspace_change AEROSPACE_FOCUSED_WORKSPACE=$AEROSPACE_FOCUSED_WORKSPACE AEROSPACE_PREV_WORKSPACE=$AEROSPACE_PREV_WORKSPACE',
+]
+
+# Start AeroSpace at login
+start-at-login = true
+# i3 doesn't have "normalizations" feature that why we disable them here.
+# But the feature is very helpful.
+# Normalizations eliminate all sorts of weird tree configurations that don't make sense.
+# Give normalizations a chance and enable them back.
+enable-normalization-flatten-containers = false
+enable-normalization-opposite-orientation-for-nested-containers = false
+
+# Mouse follows focus when focused monitor changes
+on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
+
+[mode.main.binding]
+    # See: https://nikitabobko.github.io/AeroSpace/goodies#open-a-new-window-with-applescript
+    cmd-d = 'exec-and-forget open -a WezTerm'
+    cmd-t = 'exec-and-forget open -a Telegram'
+    cmd-b = 'exec-and-forget ~/.config/aerospace/open_chrome.sh'
+    cmd-g = 'exec-and-forget open -a Goodnotes'
+
+    cmd-shift-b = 'exec-and-forget ~/.config/aerospace/toggle_sketchybar.sh'
+
+    # i3 wraps focus by default
+    cmd-j =         'focus --boundaries-action wrap-around-the-workspace left'
+    cmd-k =         'focus --boundaries-action wrap-around-the-workspace right'
+    cmd-h =         'resize width -30'
+    cmd-l =         'resize width +30'
+
+    cmd-shift-j = 'focus-monitor prev --wrap-around'
+    cmd-shift-k = 'focus-monitor next --wrap-around'
+
+    cmd-shift-l = 'move-node-to-monitor next --wrap-around'
+    cmd-shift-h = 'move-node-to-monitor prev --wrap-around'
+
+    cmd-ctrl-j = 'move down'
+    cmd-ctrl-k = 'move up'
+    cmd-ctrl-h = 'move left'
+    cmd-ctrl-l = 'move right'
+
+    # Consider using 'join-with' command as a 'split' replacement if you want to enable
+    # normalizations
+    # cmd-i = 'split horizontal'
+    # cmd-v = 'split vertical'
+
+    cmd-f = 'fullscreen'
+    # cmd-s = 'layout v_accordion' # 'layout stacking' in i3
+    cmd-u = 'layout tiles accordion'
+    cmd-i = 'layout tiles horizontal vertical'
+    cmd-e = 'layout tiles horizontal vertical' # 'layout toggle split' in i3
+
+    cmd-shift-space = 'layout floating tiling' # 'floating toggle' in i3
+
+    # Not supported, because this command is redundant in AeroSpace mental model.
+    # See: https://nikitabobko.github.io/AeroSpace/guide#floating-windows
+    # cmd-space = 'focus toggle_tiling_floating'
+
+    # `focus parent`/`focus child` are not yet supported, and it's not clear whether they
+    # should be supported at all https://github.com/nikitabobko/AeroSpace/issues/5
+    # cmd-a = 'focus parent'
+
+    cmd-1 = 'workspace 1'
+    cmd-2 = 'workspace 2'
+    cmd-3 = 'workspace 3'
+    cmd-4 = 'workspace 4'
+    cmd-5 = 'workspace 5'
+    cmd-6 = 'workspace 6'
+    cmd-7 = 'workspace 7'
+    cmd-8 = 'workspace 8'
+    cmd-9 = 'workspace 9'
+    cmd-0 = 'workspace 10'
+
+    cmd-shift-1 = 'move-node-to-workspace 1'
+    cmd-shift-2 = 'move-node-to-workspace 2'
+    cmd-shift-3 = 'move-node-to-workspace 3'
+    cmd-shift-4 = 'move-node-to-workspace 4'
+    cmd-shift-5 = 'move-node-to-workspace 5'
+    cmd-shift-6 = 'move-node-to-workspace 6'
+    cmd-shift-7 = 'move-node-to-workspace 7'
+    cmd-shift-8 = 'move-node-to-workspace 8'
+    cmd-shift-9 = 'move-node-to-workspace 9'
+    cmd-shift-0 = 'move-node-to-workspace 10'
+
+    cmd-shift-c = 'reload-config'
+
+    cmd-r = 'mode resize'
+
+[mode.resize.binding]
+    h = 'resize width -50'
+    j = 'resize height +50'
+    k = 'resize height -50'
+    l = 'resize width +50'
+    enter = 'mode main'
+    esc = 'mode main'
+
+# Gaps between windows (inner-*) and between monitor edges (outer-*).
+# Possible values:
+# - Constant:     gaps.outer.top = 8
+# - Per monitor:  gaps.outer.top = [{ monitor.main = 16 }, { monitor."some-pattern" = 32 }, 24]
+#                 In this example, 24 is a default value when there is no match.
+#                 Monitor pattern is the same as for 'workspace-to-monitor-force-assignment'.
+#                 See:
+#                 https://nikitabobko.github.io/AeroSpace/guide#assign-workspaces-to-monitors
+[gaps]
+    inner.horizontal = 8
+    inner.vertical =   8
+    outer.left =       0
+    outer.bottom =     0
+    outer.top =        2
+    outer.right =      0
+
