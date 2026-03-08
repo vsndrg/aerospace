@@ -12,7 +12,7 @@ after-startup-command = [
     # JankyBorders has a built-in detection of already running process,
     # so it won't be run twice on AeroSpace restart
     'exec-and-forget /opt/homebrew/opt/sketchybar/bin/sketchybar',
-    'exec-and-forget /opt/homebrew/opt/borders/bin/borders active_color="glow(0xd9b4befe)" inactive_color=0x20494d64 width=4.0'
+    'exec-and-forget /opt/homebrew/opt/borders/bin/borders active_color="glow(0xffcfb8ff)" inactive_color=0x20494d64 width=6.0'
 ]
 
 exec-on-workspace-change = [
@@ -41,6 +41,7 @@ on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
     cmd-g = 'exec-and-forget open -a Goodnotes'
 
     cmd-shift-b = 'exec-and-forget ~/.config/aerospace/toggle_sketchybar.sh'
+    cmd-alt-z   = 'exec-and-forget ~/.config/sketchybar/helpers/zen_toggle.sh'
 
     # i3 wraps focus by default
     cmd-j =         'focus --boundaries-action wrap-around-the-workspace left'
@@ -123,10 +124,10 @@ on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
 #                 See:
 #                 https://nikitabobko.github.io/AeroSpace/guide#assign-workspaces-to-monitors
 [gaps]
-    inner.horizontal = 8
-    inner.vertical =   8
-    outer.left =       8
-    outer.bottom =     8
-    outer.top =        8
-    outer.right =      8
+    inner.horizontal = 10
+    inner.vertical =   10
+    outer.left =       10
+    outer.bottom =     10
+    outer.top =        6
+    outer.right =      10
 
