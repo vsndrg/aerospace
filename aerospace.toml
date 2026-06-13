@@ -66,7 +66,7 @@ on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
     # cmd-i = 'split horizontal'
     # cmd-v = 'split vertical'
 
-    cmd-f = 'fullscreen'
+    # cmd-f = 'fullscreen'
     # cmd-s = 'layout v_accordion' # 'layout stacking' in i3
     cmd-u = 'layout tiles accordion'
     cmd-i = 'layout tiles horizontal vertical'
