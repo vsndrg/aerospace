@@ -55,10 +55,19 @@ public let gitHash = "$(git -C "$SRC" rev-parse HEAD)"
 public let gitShortHash = "$(git -C "$SRC" rev-parse --short HEAD)"
 EOF
 
-# Command Line Tools are enough (no Xcode license needed)
-(cd "$SRC" && env -u DEVELOPER_DIR swift build -c release --product AeroSpaceApp 2>&1 | grep -E "error|Build of product") || true
+# Command Line Tools are enough (no Xcode license needed).
+# Remove the previous binary first: .build survives `git clean`, so a failed
+# build must not leave an old binary looking like a fresh one.
 BIN="$SRC/.build/release/AeroSpaceApp"
-[[ -x "$BIN" ]] || { echo "build failed" >&2; exit 1; }
+rm -f "$BIN"
+LOG="$(mktemp)"
+if ! (cd "$SRC" && env -u DEVELOPER_DIR swift build -c release --product AeroSpaceApp) >"$LOG" 2>&1; then
+  grep -E "error" "$LOG" >&2 || tail -20 "$LOG" >&2
+  echo "build failed (full log: $LOG)" >&2
+  exit 1
+fi
+rm -f "$LOG"
+[[ -x "$BIN" ]] || { echo "build produced no binary" >&2; exit 1; }
 echo "built $BIN ($VERSION + patches)"
 
 [[ $install == 1 ]] || exit 0
