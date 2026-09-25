@@ -1,8 +1,37 @@
+diff --git a/Sources/AppBundle/command/impl/MoveWorkspaceToMonitorCommand.swift b/Sources/AppBundle/command/impl/MoveWorkspaceToMonitorCommand.swift
+index e32db7f1..c70bf14e 100644
+--- a/Sources/AppBundle/command/impl/MoveWorkspaceToMonitorCommand.swift
++++ b/Sources/AppBundle/command/impl/MoveWorkspaceToMonitorCommand.swift
+@@ -16,6 +16,7 @@ struct MoveWorkspaceToMonitorCommand: Command {
+                     return true
+                 }
+                 if targetMonitor.setActiveWorkspace(focusedWorkspace) {
++                    focusedWorkspace.setHomeMonitor(targetMonitor) // Patch (monitors)
+                     let stubWorkspace = getStubWorkspace(for: prevMonitor)
+                     check(
+                         prevMonitor.setActiveWorkspace(stubWorkspace),
+diff --git a/Sources/AppBundle/command/impl/SummonWorkspaceCommand.swift b/Sources/AppBundle/command/impl/SummonWorkspaceCommand.swift
+index 62f98609..dd40939c 100644
+--- a/Sources/AppBundle/command/impl/SummonWorkspaceCommand.swift
++++ b/Sources/AppBundle/command/impl/SummonWorkspaceCommand.swift
+@@ -14,7 +14,12 @@ struct SummonWorkspaceCommand: Command {
+             }
+             return !args.failIfNoop
+         }
++        // Patch (monitors): summoned from another monitor → this one is its home now.
++        // (A workspace of a disconnected monitor summoned where it already appears
++        // keeps its home and goes back when that monitor returns.)
++        let fromMonitor = workspace.workspaceMonitor
+         if monitor.setActiveWorkspace(workspace) {
++            if fromMonitor.monitorId != monitor.monitorId { workspace.setHomeMonitor(monitor) }
+             return workspace.focusWorkspace()
+         } else {
+             return io.err("Can't move workspace '\(workspace.name)' to monitor '\(monitor.name)'. workspace-to-monitor-force-assignment doesn't allow it")
 diff --git a/Sources/AppBundle/tree/Workspace.swift b/Sources/AppBundle/tree/Workspace.swift
-index e1d425d0..31f9d095 100644
+index e1d425d0..3d4beacd 100644
 --- a/Sources/AppBundle/tree/Workspace.swift
 +++ b/Sources/AppBundle/tree/Workspace.swift
-@@ -108,11 +108,38 @@ extension Workspace {
+@@ -108,11 +108,47 @@ extension Workspace {
      var workspaceMonitor: Monitor {
          forceAssignedMonitor
              ?? visibleWorkspaceToScreenPoint[self]?.monitorApproximation
@@ -31,6 +60,15 @@ index e1d425d0..31f9d095 100644
 +        if !isVisible { assignedMonitorPoint = point }
 +    }
 +
++    /// Patch (monitors): an explicit move to another monitor (move-workspace-to-monitor,
++    /// summon-workspace) makes it the workspace's home, even while the old home is
++    /// disconnected — otherwise the workspace would fall back to the nearest monitor
++    /// to the missing one as soon as it is hidden.
++    @MainActor
++    func setHomeMonitor(_ monitor: Monitor) {
++        assignedMonitorPoint = monitor.rect.topLeftCorner
++    }
++
 +    /// Patch (monitors): shown on `screen`, but its own monitor is one of `screens`.
 +    @MainActor
 +    fileprivate func isAwayFromHome(at screen: CGPoint, among screens: [CGPoint]) -> Bool {
@@ -42,7 +80,7 @@ index e1d425d0..31f9d095 100644
  extension Monitor {
      @MainActor
      var activeWorkspace: Workspace {
-@@ -157,6 +184,13 @@ extension CGPoint {
+@@ -157,6 +193,13 @@ extension CGPoint {
          }
          visibleWorkspaceToScreenPoint[workspace] = self
          screenPointToVisibleWorkspace[self] = workspace
@@ -56,7 +94,7 @@ index e1d425d0..31f9d095 100644
          workspace.assignedMonitorPoint = self
          return true
      }
-@@ -175,12 +209,31 @@ private func rearrangeWorkspacesOnMonitors() {
+@@ -175,12 +218,31 @@ private func rearrangeWorkspacesOnMonitors() {
          }
      }
  
