@@ -9,11 +9,14 @@
 # The patch raises + places the target window before anything else is queued
 # (and, in accordion layouts, lets its app finish that before the siblings are
 # placed, ≤100ms), and hides the old windows only once the new ones are in
-# place (≤150ms).
+# place (≤150ms) — bottom-up where they overlap, so no lower window is ever
+# revealed (≤80ms).
 #
-# Signing is ad-hoc (no certificate needed), so macOS asks for Accessibility
-# again after every install: System Settings → Privacy & Security →
-# Accessibility → AeroSpace.
+# Signing uses the local "aerospace-local-codesign" certificate (login
+# keychain, trusted for code signing), so the Accessibility grant survives
+# rebuilds. Without it the build falls back to ad-hoc signing, and macOS asks
+# for Accessibility again after every install: System Settings → Privacy &
+# Security → Accessibility → AeroSpace.
 #
 # Usage: ./build.sh [--install] [git-ref]
 #   default ref: the commit of the installed aerospace CLI
@@ -67,19 +70,40 @@ if [[ "$signature" == *"Authority=aerospace-codesign-certificate"* ]]; then
 fi
 [[ -d "$BACKUP" ]] || { echo "no pristine AeroSpace.app to build on" >&2; exit 1; }
 
+IDENTITY="aerospace-local-codesign"
+if ! security find-identity -v -p codesigning | grep -q "\"$IDENTITY\""; then
+  echo "warning: no '$IDENTITY' certificate, signing ad-hoc" >&2
+  IDENTITY="-"
+fi
+prev_signature="$(codesign -dvv "$APP" 2>&1 || true)"
+
 STAGE="$(mktemp -d)/AeroSpace.app"
 cp -R "$BACKUP" "$STAGE"
 cp "$BIN" "$STAGE/Contents/MacOS/AeroSpace"
-codesign --force --sign - "$STAGE" 2>/dev/null
+codesign --force --sign "$IDENTITY" "$STAGE" 2>/dev/null
 codesign --verify --deep --strict "$STAGE"
 
 osascript -e 'quit app "AeroSpace"' 2>/dev/null || true
 for _ in {1..50}; do pgrep -xq AeroSpace || break; sleep 0.1; done
 pkill -x AeroSpace 2>/dev/null || true
+for _ in {1..50}; do pgrep -xq AeroSpace || break; sleep 0.1; done
 
 rm -rf "$APP"
 mv "$STAGE" "$APP"
-# the old grant belongs to a different signature; start clean so macOS asks again
-tccutil reset Accessibility bobko.aerospace >/dev/null 2>&1 || true
-open "$APP"
-echo "installed $APP — grant Accessibility to AeroSpace when macOS asks"
+# A grant is tied to the signer: reset it only when the signer changes (or on
+# ad-hoc, where every build is a new identity), so macOS asks again cleanly.
+if [[ "$IDENTITY" == "-" || "$prev_signature" != *"Authority=$IDENTITY"* ]]; then
+  tccutil reset Accessibility bobko.aerospace >/dev/null 2>&1 || true
+  regrant=1
+fi
+# the first launch can race with the old instance shutting down
+for _ in 1 2 3; do
+  open "$APP"
+  sleep 2
+  pgrep -xq AeroSpace && break
+done
+if [[ -n "${regrant:-}" ]]; then
+  echo "installed $APP — grant Accessibility to AeroSpace when macOS asks"
+else
+  echo "installed $APP (Accessibility grant kept)"
+fi

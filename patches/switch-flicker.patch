@@ -1,5 +1,5 @@
 diff --git a/Sources/AppBundle/layout/refresh.swift b/Sources/AppBundle/layout/refresh.swift
-index 56603a90..51deff0f 100644
+index 56603a90..0ff22871 100644
 --- a/Sources/AppBundle/layout/refresh.swift
 +++ b/Sources/AppBundle/layout/refresh.swift
 @@ -68,12 +68,24 @@ func runLightSession<T>(
@@ -30,7 +30,7 @@ index 56603a90..51deff0f 100644
              scheduleRefreshSession(event)
              return result
          }
-@@ -181,6 +193,19 @@ private func layoutWorkspaces() async throws {
+@@ -181,10 +193,66 @@ private func layoutWorkspaces() async throws {
          workspace.allLeafWindowsRecursive.forEach { ($0 as! MacWindow).unhideFromCorner() } // todo as!
          try await workspace.layoutWorkspace()
      }
@@ -49,11 +49,33 @@ index 56603a90..51deff0f 100644
 +    }
      for workspace in Workspace.all where !workspace.isVisible {
          let corner = monitorToOptimalHideCorner[workspace.workspaceMonitor.rect.topLeftCorner] ?? .bottomRightCorner
-         for window in workspace.allLeafWindowsRecursive {
-@@ -189,6 +214,30 @@ private func layoutWorkspaces() async throws {
-     }
- }
- 
+-        for window in workspace.allLeafWindowsRecursive {
+-            try await (window as! MacWindow).hideInCorner(corner) // todo as!
++        let windows = workspace.allLeafWindowsRecursive
++        // Patch (flicker): with overlapping windows (accordion / floating), hide
++        // bottom-up. Hides run in parallel per app, so if the top window's app
++        // is faster, the window below it would be revealed for a frame (visible
++        // through translucent windows of the new workspace). Hide the rest
++        // first, let their apps finish (bounded), then the top window.
++        let overlapping = workspace.rootTilingContainer.layout == .accordion
++            || !workspace.children.filterIsInstance(of: Window.self).isEmpty
++        if overlapping, windows.count > 1, let top = workspace.mostRecentWindowRecursive as? MacWindow, !top.isHiddenInCorner {
++            var apps: [MacApp] = []
++            for window in windows where window !== top {
++                let macWindow = window as! MacWindow // todo as!
++                if !macWindow.isHiddenInCorner, !apps.contains(where: { $0 === macWindow.macApp }) { apps.append(macWindow.macApp) }
++                try await macWindow.hideInCorner(corner)
++            }
++            await drainAxQueues(apps, timeoutMs: 80)
++            try await top.hideInCorner(corner)
++        } else {
++            for window in windows {
++                try await (window as! MacWindow).hideInCorner(corner) // todo as!
++            }
++        }
++    }
++}
++
 +/// Waits until every given app has run its queued AX jobs, or the timeout hits
 +/// (a hung app must never block workspace switching).
 +@MainActor
@@ -74,13 +96,9 @@ index 56603a90..51deff0f 100644
 +        Task { @MainActor in
 +            try? await Task.sleep(nanoseconds: timeoutMs * 1_000_000)
 +            finish()
-+        }
-+    }
-+}
-+
- @MainActor
- private func normalizeContainers() {
-     // Can't do it only for visible workspace because most of the commands support --window-id and --workspace flags
+         }
+     }
+ }
 diff --git a/Sources/AppBundle/tree/MacApp.swift b/Sources/AppBundle/tree/MacApp.swift
 index 89bcda2c..090be9d9 100644
 --- a/Sources/AppBundle/tree/MacApp.swift
