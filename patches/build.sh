@@ -12,6 +12,10 @@
 # place (≤150ms) — bottom-up where they overlap, so no lower window is ever
 # revealed (≤80ms).
 #
+# monitors.patch: a hidden empty workspace belongs to the main monitor (so
+# `workspace N` for a workspace the bar doesn't show opens it there), and a
+# monitor that reconnects shows the workspace it showed before.
+#
 # Signing uses the local "aerospace-local-codesign" certificate (login
 # keychain, trusted for code signing), so the Accessibility grant survives
 # rebuilds. Without it the build falls back to ad-hoc signing, and macOS asks
@@ -36,6 +40,7 @@ save_layout() {
   {
     echo "focus $(aerospace list-workspaces --focused) $(aerospace list-windows --focused --format '%{window-id}' 2>/dev/null)"
     aerospace list-windows --all --format '%{window-id} %{workspace} %{window-layout}'
+    aerospace list-workspaces --all --format 'monitor %{workspace} %{monitor-id} %{workspace-is-visible}'
   } > "$LAYOUT_SNAPSHOT.tmp" && mv "$LAYOUT_SNAPSHOT.tmp" "$LAYOUT_SNAPSHOT"
 }
 
@@ -46,15 +51,25 @@ restore_layout() {
     [[ -n "$(aerospace list-windows --all --format '%{window-id}' 2>/dev/null)" ]] && break
     sleep 0.25
   done
-  local focus_ws="" focus_win="" id ws layout
+  local focus_ws="" focus_win="" id ws layout visible=()
   while read -r id ws layout; do
     if [[ "$id" == "focus" ]]; then focus_ws="$ws"; focus_win="$layout"; continue; fi
+    [[ "$id" == "monitor" ]] && continue
     aerospace move-node-to-workspace --window-id "$id" "$ws" 2>/dev/null || true
   done < "$LAYOUT_SNAPSHOT"
   while read -r id ws layout; do
-    [[ "$id" == "focus" || -z "$layout" ]] && continue
+    [[ "$id" == "focus" || "$id" == "monitor" || -z "$layout" ]] && continue
     aerospace layout --window-id "$id" "$layout" 2>/dev/null || true
   done < "$LAYOUT_SNAPSHOT"
+  # Workspaces back on their monitors ("monitor <ws> <monitor-id> <visible>"),
+  # then each monitor shows what it showed before.
+  local monitor is_visible
+  while read -r id ws monitor is_visible; do
+    [[ "$id" == "monitor" ]] || continue
+    aerospace move-workspace-to-monitor --workspace "$ws" "$monitor" 2>/dev/null || true
+    [[ "$is_visible" == true ]] && visible+=("$ws")
+  done < "$LAYOUT_SNAPSHOT"
+  for ws in "${visible[@]}"; do aerospace workspace "$ws" 2>/dev/null || true; done
   [[ -n "$focus_ws" ]] && aerospace workspace "$focus_ws" 2>/dev/null || true
   [[ -n "$focus_win" ]] && aerospace focus --window-id "$focus_win" 2>/dev/null || true
 }
@@ -77,7 +92,9 @@ REF="${1:-$HASH}"
 if [[ ! -d "$SRC/.git" ]]; then
   git clone -q https://github.com/nikitabobko/AeroSpace "$SRC"
 fi
-git -C "$SRC" fetch -q origin "$REF" 2>/dev/null || git -C "$SRC" fetch -q origin
+# fetch only when the commit isn't here yet (builds work offline)
+git -C "$SRC" cat-file -e "$REF^{commit}" 2>/dev/null \
+  || git -C "$SRC" fetch -q origin "$REF" 2>/dev/null || git -C "$SRC" fetch -q origin
 git -C "$SRC" checkout -q --force "$REF"
 git -C "$SRC" clean -qfdx -e .build
 

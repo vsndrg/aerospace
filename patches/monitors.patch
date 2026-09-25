@@ -1,0 +1,112 @@
+diff --git a/Sources/AppBundle/tree/Workspace.swift b/Sources/AppBundle/tree/Workspace.swift
+index e1d425d0..c072462b 100644
+--- a/Sources/AppBundle/tree/Workspace.swift
++++ b/Sources/AppBundle/tree/Workspace.swift
+@@ -108,11 +108,31 @@ extension Workspace {
+     var workspaceMonitor: Monitor {
+         forceAssignedMonitor
+             ?? visibleWorkspaceToScreenPoint[self]?.monitorApproximation
+-            ?? assignedMonitorPoint?.monitorApproximation
++            // Patch (monitors): a hidden empty workspace doesn't exist for the user, so
++            // it belongs to the main monitor — `workspace N` opens it there, not on
++            // whatever monitor it was last shown on.
++            ?? (isEffectivelyEmpty ? nil : assignedMonitorPoint?.monitorApproximation)
+             ?? mainMonitor
+     }
+ }
+ 
++extension Workspace {
++    /// Patch (monitors): where this workspace belongs, even while that monitor is
++    /// disconnected (workspaceMonitor approximates a missing monitor by the nearest one).
++    @MainActor
++    var homeMonitorPoint: CGPoint {
++        visibleWorkspaceToScreenPoint[self]
++            ?? (isEffectivelyEmpty ? nil : assignedMonitorPoint)
++            ?? workspaceMonitor.rect.topLeftCorner
++    }
++
++    /// Patch (monitors): re-home a hidden workspace to a monitor that may be absent.
++    @MainActor
++    func setHomeMonitorPoint(_ point: CGPoint) {
++        if !isVisible { assignedMonitorPoint = point }
++    }
++}
++
+ extension Monitor {
+     @MainActor
+     var activeWorkspace: Workspace {
+@@ -157,6 +177,13 @@ extension CGPoint {
+         }
+         visibleWorkspaceToScreenPoint[workspace] = self
+         screenPointToVisibleWorkspace[self] = workspace
++        // Patch (monitors): while a workspace's own monitor is disconnected, showing it
++        // elsewhere doesn't re-home it — it goes back when that monitor returns.
++        if let home = workspace.assignedMonitorPoint, home != self,
++           !monitors.contains(where: { $0.rect.topLeftCorner == home })
++        {
++            return true
++        }
+         workspace.assignedMonitorPoint = self
+         return true
+     }
+@@ -175,7 +202,22 @@ private func rearrangeWorkspacesOnMonitors() {
+         }
+     }
+ 
++    // Patch (monitors): a monitor that merely moved (arrangement changed) takes its
++    // workspaces along — only a disconnected monitor's workspaces keep the old point.
++    for (newScreen, oldScreen) in newScreenToOldScreenMapping where newScreen != oldScreen {
++        for workspace in Workspace.all where workspace.assignedMonitorPoint == oldScreen {
++            workspace.assignedMonitorPoint = newScreen
++        }
++    }
++
+     let oldScreenPointToVisibleWorkspace = screenPointToVisibleWorkspace
++    // Patch (monitors): remember what a disconnected monitor was showing, so it
++    // shows the same workspace again when it comes back (see getStubWorkspace).
++    for oldScreen in oldVisibleScreens {
++        if let workspace = oldScreenPointToVisibleWorkspace[oldScreen] {
++            screenPointToPrevVisibleWorkspace[oldScreen] = workspace.name
++        }
++    }
+     screenPointToVisibleWorkspace = [:]
+     visibleWorkspaceToScreenPoint = [:]
+ 
+diff --git a/Sources/AppBundle/tree/frozen/closedWindowsCache.swift b/Sources/AppBundle/tree/frozen/closedWindowsCache.swift
+index 77847f01..02733cb3 100644
+--- a/Sources/AppBundle/tree/frozen/closedWindowsCache.swift
++++ b/Sources/AppBundle/tree/frozen/closedWindowsCache.swift
+@@ -21,6 +21,10 @@ struct FrozenMonitor: Sendable {
+ struct FrozenWorkspace: Sendable {
+     let name: String
+     let monitor: FrozenMonitor // todo drop this property, once monitor to workspace assignment migrates to TreeNode
++    // Patch (monitors): the workspace's own monitor, which may be disconnected right now
++    // (Sidecar: its windows "die" for a moment when it disconnects, and the world is cached
++    // with every workspace of the missing monitor approximated to the main one).
++    let homePoint: CGPoint
+     let rootTilingNode: FrozenContainer
+     let floatingWindows: [FrozenWindow]
+     let macosUnconventionalWindows: [FrozenWindow]
+@@ -28,6 +32,7 @@ struct FrozenWorkspace: Sendable {
+     @MainActor init(_ workspace: Workspace) {
+         name = workspace.name
+         monitor = FrozenMonitor(workspace.workspaceMonitor)
++        homePoint = workspace.homeMonitorPoint
+         rootTilingNode = FrozenContainer(workspace.rootTilingContainer)
+         floatingWindows = workspace.floatingWindows.map(FrozenWindow.init)
+         macosUnconventionalWindows =
+@@ -58,9 +63,11 @@ struct FrozenWorkspace: Sendable {
+ 
+     for frozenWorkspace in closedWindowsCache.workspaces {
+         let workspace = Workspace.get(byName: frozenWorkspace.name)
+-        _ = topLeftCornerToMonitor[frozenWorkspace.monitor.topLeftCorner]?
+-            .singleOrNil()?
+-            .setActiveWorkspace(workspace)
++        if let home = topLeftCornerToMonitor[frozenWorkspace.homePoint]?.singleOrNil() {
++            _ = home.setActiveWorkspace(workspace)
++        } else {
++            workspace.setHomeMonitorPoint(frozenWorkspace.homePoint)
++        }
+         for frozenWindow in frozenWorkspace.floatingWindows {
+             MacWindow.get(byId: frozenWindow.id)?.bindAsFloatingWindow(to: workspace)
+         }

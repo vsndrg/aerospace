@@ -37,7 +37,9 @@ enable-normalization-opposite-orientation-for-nested-containers = false
 on-focus-changed = ['exec-and-forget /opt/homebrew/opt/sketchybar/bin/sketchybar --trigger aerospace_focus_change']
 
 # Mouse follows focus when focused monitor changes
-on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
+# Checked asynchronously, i.e. after the whole binding: a binding that passes
+# through another monitor and comes back (cmd-shift-h/l) must not move the cursor.
+on-focused-monitor-changed = ['exec-and-forget /opt/homebrew/bin/aerospace move-mouse monitor-lazy-center']
 
 [mode.main.binding]
     # See: https://nikitabobko.github.io/AeroSpace/goodies#open-a-new-window-with-applescript
@@ -58,8 +60,10 @@ on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
     cmd-shift-j = 'focus-monitor prev --wrap-around'
     cmd-shift-k = 'focus-monitor next --wrap-around'
 
-    cmd-shift-l = 'move-node-to-monitor next --wrap-around'
-    cmd-shift-h = 'move-node-to-monitor prev --wrap-around'
+    # The whole focused workspace moves to the next/prev monitor (keeps its
+    # number); focus stays on this monitor, which shows another of its own.
+    cmd-shift-l = ['move-workspace-to-monitor --wrap-around next', 'focus-monitor --wrap-around prev']
+    cmd-shift-h = ['move-workspace-to-monitor --wrap-around prev', 'focus-monitor --wrap-around next']
 
     cmd-ctrl-j = 'move down'
     cmd-ctrl-k = 'move up'
@@ -108,6 +112,19 @@ on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
     cmd-shift-8 = 'move-node-to-workspace 8'
     cmd-shift-9 = 'move-node-to-workspace 9'
     cmd-shift-0 = 'move-node-to-workspace 10'
+
+    # Summon: bring workspace N to the focused monitor (its old monitor shows
+    # another of its own workspaces). cmd-N focuses N where it lives instead.
+    cmd-alt-1 = 'summon-workspace 1'
+    cmd-alt-2 = 'summon-workspace 2'
+    cmd-alt-3 = 'summon-workspace 3'
+    cmd-alt-4 = 'summon-workspace 4'
+    cmd-alt-5 = 'summon-workspace 5'
+    cmd-alt-6 = 'summon-workspace 6'
+    cmd-alt-7 = 'summon-workspace 7'
+    cmd-alt-8 = 'summon-workspace 8'
+    cmd-alt-9 = 'summon-workspace 9'
+    cmd-alt-0 = 'summon-workspace 10'
 
     cmd-shift-c = 'reload-config'
 
