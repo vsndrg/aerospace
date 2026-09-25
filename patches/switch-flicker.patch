@@ -1,5 +1,5 @@
 diff --git a/Sources/AppBundle/layout/refresh.swift b/Sources/AppBundle/layout/refresh.swift
-index 56603a90..0ff22871 100644
+index 56603a90..7eec0ab1 100644
 --- a/Sources/AppBundle/layout/refresh.swift
 +++ b/Sources/AppBundle/layout/refresh.swift
 @@ -68,12 +68,24 @@ func runLightSession<T>(
@@ -30,7 +30,26 @@ index 56603a90..0ff22871 100644
              scheduleRefreshSession(event)
              return result
          }
-@@ -181,10 +193,66 @@ private func layoutWorkspaces() async throws {
+@@ -140,8 +152,18 @@ enum OptimalHideCorner {
+     case bottomLeftCorner, bottomRightCorner
+ }
+ 
++// Patch (flicker): the waits added below let layout passes interleave (every
++// hotkey runs its own session). A pass that finds a newer pass has started
++// stops hiding — the newer one hides whatever is still hidden-worthy, based on
++// the current state. Otherwise a quick switch back (cmd-2, cmd-1) could hide
++// the window of the workspace that just became visible again.
++@MainActor private var layoutPassGeneration = 0
++
+ @MainActor
+ private func layoutWorkspaces() async throws {
++    layoutPassGeneration += 1
++    let generation = layoutPassGeneration
++    func superseded() -> Bool { generation != layoutPassGeneration }
+     if !TrayMenuModel.shared.isEnabled {
+         for workspace in Workspace.all {
+             workspace.allLeafWindowsRecursive.forEach { ($0 as! MacWindow).unhideFromCorner() } // todo as!
+@@ -181,10 +203,71 @@ private func layoutWorkspaces() async throws {
          workspace.allLeafWindowsRecursive.forEach { ($0 as! MacWindow).unhideFromCorner() } // todo as!
          try await workspace.layoutWorkspace()
      }
@@ -46,8 +65,10 @@ index 56603a90..0ff22871 100644
 +            }
 +        }
 +        await drainAxQueues(apps, timeoutMs: 150)
++        if superseded() { return }
 +    }
      for workspace in Workspace.all where !workspace.isVisible {
++        if superseded() { return }
          let corner = monitorToOptimalHideCorner[workspace.workspaceMonitor.rect.topLeftCorner] ?? .bottomRightCorner
 -        for window in workspace.allLeafWindowsRecursive {
 -            try await (window as! MacWindow).hideInCorner(corner) // todo as!
@@ -62,14 +83,17 @@ index 56603a90..0ff22871 100644
 +        if overlapping, windows.count > 1, let top = workspace.mostRecentWindowRecursive as? MacWindow, !top.isHiddenInCorner {
 +            var apps: [MacApp] = []
 +            for window in windows where window !== top {
++                if superseded() || workspace.isVisible { return }
 +                let macWindow = window as! MacWindow // todo as!
 +                if !macWindow.isHiddenInCorner, !apps.contains(where: { $0 === macWindow.macApp }) { apps.append(macWindow.macApp) }
 +                try await macWindow.hideInCorner(corner)
 +            }
 +            await drainAxQueues(apps, timeoutMs: 80)
++            if superseded() || workspace.isVisible { return }
 +            try await top.hideInCorner(corner)
 +        } else {
 +            for window in windows {
++                if superseded() || workspace.isVisible { return }
 +                try await (window as! MacWindow).hideInCorner(corner) // todo as!
 +            }
 +        }
