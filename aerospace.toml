@@ -133,7 +133,11 @@ on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
     inner.horizontal = 10
     inner.vertical =   10
     outer.left =       10
-    outer.bottom =     10
-    outer.top =        8
+    outer.bottom =     9  # AeroSpace lays windows out 1pt short (a macOS workaround), so 9 reads as 10
+    # One 10pt rhythm everywhere: screen edge → bar island → window → window.
+    # The bar is 32pt tall with 26pt islands (bottom edge at 29pt), so windows
+    # start at 39pt. On the built-in display the notch strip (32pt) is already
+    # outside the usable area; on displays without a notch it isn't.
+    outer.top =        [{ monitor.built-in = 7 }, 39]
     outer.right =      10
 
