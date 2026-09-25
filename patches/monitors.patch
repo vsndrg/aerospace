@@ -1,8 +1,8 @@
 diff --git a/Sources/AppBundle/tree/Workspace.swift b/Sources/AppBundle/tree/Workspace.swift
-index e1d425d0..c072462b 100644
+index e1d425d0..31f9d095 100644
 --- a/Sources/AppBundle/tree/Workspace.swift
 +++ b/Sources/AppBundle/tree/Workspace.swift
-@@ -108,11 +108,31 @@ extension Workspace {
+@@ -108,11 +108,38 @@ extension Workspace {
      var workspaceMonitor: Monitor {
          forceAssignedMonitor
              ?? visibleWorkspaceToScreenPoint[self]?.monitorApproximation
@@ -30,12 +30,19 @@ index e1d425d0..c072462b 100644
 +    func setHomeMonitorPoint(_ point: CGPoint) {
 +        if !isVisible { assignedMonitorPoint = point }
 +    }
++
++    /// Patch (monitors): shown on `screen`, but its own monitor is one of `screens`.
++    @MainActor
++    fileprivate func isAwayFromHome(at screen: CGPoint, among screens: [CGPoint]) -> Bool {
++        guard let home = assignedMonitorPoint else { return false }
++        return home != screen && screens.contains(home)
++    }
 +}
 +
  extension Monitor {
      @MainActor
      var activeWorkspace: Workspace {
-@@ -157,6 +177,13 @@ extension CGPoint {
+@@ -157,6 +184,13 @@ extension CGPoint {
          }
          visibleWorkspaceToScreenPoint[workspace] = self
          screenPointToVisibleWorkspace[self] = workspace
@@ -49,7 +56,7 @@ index e1d425d0..c072462b 100644
          workspace.assignedMonitorPoint = self
          return true
      }
-@@ -175,7 +202,22 @@ private func rearrangeWorkspacesOnMonitors() {
+@@ -175,12 +209,31 @@ private func rearrangeWorkspacesOnMonitors() {
          }
      }
  
@@ -72,6 +79,15 @@ index e1d425d0..c072462b 100644
      screenPointToVisibleWorkspace = [:]
      visibleWorkspaceToScreenPoint = [:]
  
+     for newScreen in newScreens {
+         if let existingVisibleWorkspace = newScreenToOldScreenMapping[newScreen].flatMap({ oldScreenPointToVisibleWorkspace[$0] }),
++           // Patch (monitors): a workspace shown here only while its own monitor was
++           // disconnected goes back when that monitor returns (showing it here again
++           // would re-home it here); its monitor picks it up via getStubWorkspace.
++           !existingVisibleWorkspace.isAwayFromHome(at: newScreen, among: newScreens),
+            newScreen.setActiveWorkspace(existingVisibleWorkspace)
+         {
+             continue
 diff --git a/Sources/AppBundle/tree/frozen/closedWindowsCache.swift b/Sources/AppBundle/tree/frozen/closedWindowsCache.swift
 index 77847f01..02733cb3 100644
 --- a/Sources/AppBundle/tree/frozen/closedWindowsCache.swift
