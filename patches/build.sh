@@ -86,16 +86,25 @@ if ! security find-identity -v -p codesigning | grep -q "\"$IDENTITY\""; then
 fi
 prev_signature="$(codesign -dvv "$APP" 2>&1 || true)"
 
-STAGE="$(mktemp -d)/AeroSpace.app"
+STAGE_DIR="$(mktemp -d)"
+trap 'rm -rf "$STAGE_DIR"' EXIT
+STAGE="$STAGE_DIR/AeroSpace.app"
 cp -R "$BACKUP" "$STAGE"
 cp "$BIN" "$STAGE/Contents/MacOS/AeroSpace"
 codesign --force --sign "$IDENTITY" "$STAGE" 2>/dev/null
 codesign --verify --deep --strict "$STAGE"
 
+old_pid="$(pgrep -x AeroSpace || true)"
 osascript -e 'quit app "AeroSpace"' 2>/dev/null || true
 for _ in {1..50}; do pgrep -xq AeroSpace || break; sleep 0.1; done
 pkill -x AeroSpace 2>/dev/null || true
-for _ in {1..50}; do pgrep -xq AeroSpace || break; sleep 0.1; done
+for _ in {1..30}; do pgrep -xq AeroSpace || break; sleep 0.1; done
+pkill -9 -x AeroSpace 2>/dev/null || true
+for _ in {1..20}; do pgrep -xq AeroSpace || break; sleep 0.1; done
+if pgrep -xq AeroSpace; then
+  echo "the running AeroSpace won't quit; nothing was changed" >&2
+  exit 1
+fi
 
 rm -rf "$APP"
 mv "$STAGE" "$APP"
@@ -109,8 +118,13 @@ fi
 for _ in 1 2 3; do
   open "$APP"
   sleep 2
-  pgrep -xq AeroSpace && break
+  new_pid="$(pgrep -x AeroSpace || true)"
+  [[ -n "$new_pid" && "$new_pid" != "$old_pid" ]] && break
 done
+if [[ -z "${new_pid:-}" || "$new_pid" == "$old_pid" ]]; then
+  echo "installed $APP, but it did not start — open it manually" >&2
+  exit 1
+fi
 if [[ -n "${regrant:-}" ]]; then
   echo "installed $APP — grant Accessibility to AeroSpace when macOS asks"
 else
