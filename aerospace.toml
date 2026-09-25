@@ -153,9 +153,11 @@ on-focused-monitor-changed = ['exec-and-forget /opt/homebrew/bin/aerospace move-
     outer.bottom =     5  # AeroSpace lays windows out 1pt short (a macOS workaround), so 5 reads as 6
     # One 6pt gap everywhere (sketchybar config.lua bar.gap): screen edge →
     # bar island → window → window → edge. Islands hang 6pt from the top and
-    # end flush with the 32pt bar (the notch strip), so windows start at 38pt.
-    # On the built-in display the notch strip is already outside the usable
-    # area; on displays without a notch it isn't.
-    outer.top =        [{ monitor.built-in = 6 }, 38]
+    # end flush with the display's bar strip: the 32pt notch strip on the
+    # built-in display (already outside the usable area there), the 30pt menu
+    # bar elsewhere (so the auto-hidden menu bar covers them) → windows start
+    # at 38 / 36. aerospace can't read the menu bar height: if a display's
+    # menu bar differs, the "30" here is what to change.
+    outer.top =        [{ monitor.built-in = 6 }, 36]
     outer.right =      6
 
