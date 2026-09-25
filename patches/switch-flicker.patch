@@ -1,0 +1,151 @@
+diff --git a/Sources/AppBundle/layout/refresh.swift b/Sources/AppBundle/layout/refresh.swift
+index 56603a90..51deff0f 100644
+--- a/Sources/AppBundle/layout/refresh.swift
++++ b/Sources/AppBundle/layout/refresh.swift
+@@ -68,12 +68,24 @@ func runLightSession<T>(
+ 
+             let focusAfter = focus.windowOrNil
+ 
++            // Patch (flicker): raise and place the target window before anything
++            // else is queued, so it is the first thing to appear and is on top
++            // from its very first frame (instead of being raised after layout).
++            if focusBefore != focusAfter, let focusAfter {
++                focusAfter.nativeFocus() // syncFocusToMacOs
++                if let window = focusAfter as? MacWindow, window.placeEarlyIfHidden(),
++                   (window.parent as? TilingContainer)?.layout == .accordion
++                {
++                    // Accordion siblings are placed right under the target. A slow app
++                    // (e.g. Electron) would let them show up first, so give the target's
++                    // app a moment (bounded) to raise and place it before laying out.
++                    await drainAxQueues([window.macApp], timeoutMs: 100)
++                }
++            }
++
+             updateTrayText()
+             SecureInputPanel.shared.refresh()
+             try await layoutWorkspaces()
+-            if focusBefore != focusAfter {
+-                focusAfter?.nativeFocus() // syncFocusToMacOs
+-            }
+             scheduleRefreshSession(event)
+             return result
+         }
+@@ -181,6 +193,19 @@ private func layoutWorkspaces() async throws {
+         workspace.allLeafWindowsRecursive.forEach { ($0 as! MacWindow).unhideFromCorner() } // todo as!
+         try await workspace.layoutWorkspace()
+     }
++    // Patch (flicker): the moves above run asynchronously on each app's own
++    // thread, so hiding right away can reveal an empty desktop for a frame.
++    // Wait (bounded) until the newly visible windows are actually in place.
++    let pendingHide = Workspace.all.contains { !$0.isVisible && $0.allLeafWindowsRecursive.contains { !$0.isHiddenInCorner } }
++    if pendingHide {
++        var apps: [MacApp] = []
++        for monitor in monitors {
++            for window in monitor.activeWorkspace.allLeafWindowsRecursive {
++                if let app = (window as? MacWindow)?.macApp, !apps.contains(where: { $0 === app }) { apps.append(app) }
++            }
++        }
++        await drainAxQueues(apps, timeoutMs: 150)
++    }
+     for workspace in Workspace.all where !workspace.isVisible {
+         let corner = monitorToOptimalHideCorner[workspace.workspaceMonitor.rect.topLeftCorner] ?? .bottomRightCorner
+         for window in workspace.allLeafWindowsRecursive {
+@@ -189,6 +214,30 @@ private func layoutWorkspaces() async throws {
+     }
+ }
+ 
++/// Waits until every given app has run its queued AX jobs, or the timeout hits
++/// (a hung app must never block workspace switching).
++@MainActor
++private func drainAxQueues(_ apps: [MacApp], timeoutMs: UInt64) async {
++    if apps.isEmpty { return }
++    final class Once { var done = false }
++    let once = Once()
++    await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
++        @MainActor func finish() {
++            if once.done { return }
++            once.done = true
++            cont.resume()
++        }
++        Task { @MainActor in
++            for app in apps { await app.drainAxQueue() }
++            finish()
++        }
++        Task { @MainActor in
++            try? await Task.sleep(nanoseconds: timeoutMs * 1_000_000)
++            finish()
++        }
++    }
++}
++
+ @MainActor
+ private func normalizeContainers() {
+     // Can't do it only for visible workspace because most of the commands support --window-id and --workspace flags
+diff --git a/Sources/AppBundle/tree/MacApp.swift b/Sources/AppBundle/tree/MacApp.swift
+index 89bcda2c..090be9d9 100644
+--- a/Sources/AppBundle/tree/MacApp.swift
++++ b/Sources/AppBundle/tree/MacApp.swift
+@@ -137,6 +137,23 @@ final class MacApp: AbstractApp {
+         }
+     }
+ 
++    /// Workspace-switch fast path: queued on the app thread ahead of the regular
++    /// layout pass. Deliberately not stored in setFrameJobs, so the layout pass
++    /// can't cancel it and push the move to the back of the queue.
++    func setAxFrameEarly(_ windowId: UInt32, _ topLeft: CGPoint?, _ size: CGSize?) {
++        _ = withWindowAsync(windowId) { [axApp] window, job in
++            try disableAnimations(app: axApp.threadGuarded, job) {
++                try setFrame(window, topLeft, size, job)
++            }
++        }
++    }
++
++    /// Returns once every AX job queued on this app's thread so far has run
++    /// (the thread executes jobs strictly in order).
++    func drainAxQueue() async {
++        _ = try? await thread?.runInLoop { _ in () }
++    }
++
+     func setAxFrameBlocking(_ windowId: UInt32, _ topLeft: CGPoint?, _ size: CGSize?) async throws {
+         setFrameJobs.removeValue(forKey: windowId)?.cancel()
+         try await withWindow(windowId) { [axApp] window, job in
+diff --git a/Sources/AppBundle/tree/MacWindow.swift b/Sources/AppBundle/tree/MacWindow.swift
+index 74e4f6fa..36cd6d5d 100644
+--- a/Sources/AppBundle/tree/MacWindow.swift
++++ b/Sources/AppBundle/tree/MacWindow.swift
+@@ -154,6 +154,17 @@ final class MacWindow: Window {
+         setAxFrame(p, nil)
+     }
+ 
++    /// Move a hidden tiling window straight to its last layout rect, before the
++    /// full layout pass runs. Windows without a known rect (floating /
++    /// fullscreen) are left to the regular layout.
++    @MainActor
++    @discardableResult
++    func placeEarlyIfHidden() -> Bool {
++        guard isHiddenInCorner, let rect = lastAppliedLayoutPhysicalRect else { return false }
++        macApp.setAxFrameEarly(windowId, rect.topLeftCorner, rect.size)
++        return true
++    }
++
+     @MainActor
+     func unhideFromCorner() {
+         guard let prevUnhiddenProportionalPositionInsideWorkspaceRect else { return }
+diff --git a/Sources/Common/gitHashGenerated.swift b/Sources/Common/gitHashGenerated.swift
+index 81740b1b..ee234564 100644
+--- a/Sources/Common/gitHashGenerated.swift
++++ b/Sources/Common/gitHashGenerated.swift
+@@ -1,3 +1,3 @@
+ // FILE IS GENERATED BY generate.sh
+-public let gitHash = "SNAPSHOT"
+-public let gitShortHash = "SNAPSHOT"
++public let gitHash = "6dde91ba43f62b407b2faf3739b837318266e077"
++public let gitShortHash = "6dde91ba"
+diff --git a/Sources/Common/versionGenerated.swift b/Sources/Common/versionGenerated.swift
+index fa5c825e..1f776750 100644
+--- a/Sources/Common/versionGenerated.swift
++++ b/Sources/Common/versionGenerated.swift
+@@ -1,2 +1,2 @@
+ // FILE IS GENERATED BY generate.sh
+-public let aeroSpaceAppVersion = "0.0.0-SNAPSHOT"
++public let aeroSpaceAppVersion = "0.20.3-Beta"
