@@ -18,12 +18,52 @@
 # for Accessibility again after every install: System Settings → Privacy &
 # Security → Accessibility → AeroSpace.
 #
-# Usage: ./build.sh [--install] [git-ref]
+# Usage: ./build.sh [--install | --restore] [git-ref]
 #   default ref: the commit of the installed aerospace CLI
 set -euo pipefail
 
 install=0
+restore_only=0
 if [[ "${1:-}" == "--install" ]]; then install=1; shift; fi
+if [[ "${1:-}" == "--restore" ]]; then restore_only=1; shift; fi
+
+# AeroSpace doesn't remember which workspace each window was on across a
+# restart (everything lands on the focused one), so installs snapshot the
+# arrangement first and restore it once the new build is running.
+LAYOUT_SNAPSHOT="$HOME/.cache/aerospace-layout.txt"
+
+save_layout() {
+  {
+    echo "focus $(aerospace list-workspaces --focused) $(aerospace list-windows --focused --format '%{window-id}' 2>/dev/null)"
+    aerospace list-windows --all --format '%{window-id} %{workspace} %{window-layout}'
+  } > "$LAYOUT_SNAPSHOT.tmp" && mv "$LAYOUT_SNAPSHOT.tmp" "$LAYOUT_SNAPSHOT"
+}
+
+restore_layout() {
+  [[ -s "$LAYOUT_SNAPSHOT" ]] || return 0
+  # wait until the server answers and sees windows (needs Accessibility)
+  for _ in {1..40}; do
+    [[ -n "$(aerospace list-windows --all --format '%{window-id}' 2>/dev/null)" ]] && break
+    sleep 0.25
+  done
+  local focus_ws="" focus_win="" id ws layout
+  while read -r id ws layout; do
+    if [[ "$id" == "focus" ]]; then focus_ws="$ws"; focus_win="$layout"; continue; fi
+    aerospace move-node-to-workspace --window-id "$id" "$ws" 2>/dev/null || true
+  done < "$LAYOUT_SNAPSHOT"
+  while read -r id ws layout; do
+    [[ "$id" == "focus" || -z "$layout" ]] && continue
+    aerospace layout --window-id "$id" "$layout" 2>/dev/null || true
+  done < "$LAYOUT_SNAPSHOT"
+  [[ -n "$focus_ws" ]] && aerospace workspace "$focus_ws" 2>/dev/null || true
+  [[ -n "$focus_win" ]] && aerospace focus --window-id "$focus_win" 2>/dev/null || true
+}
+
+if [[ $restore_only == 1 ]]; then
+  restore_layout
+  echo "restored window arrangement from $LAYOUT_SNAPSHOT"
+  exit 0
+fi
 
 APP=/Applications/AeroSpace.app
 BACKUP="$HOME/.cache/aerospace-original.app"
@@ -94,6 +134,7 @@ cp "$BIN" "$STAGE/Contents/MacOS/AeroSpace"
 codesign --force --sign "$IDENTITY" "$STAGE" 2>/dev/null
 codesign --verify --deep --strict "$STAGE"
 
+save_layout || true
 old_pid="$(pgrep -x AeroSpace || true)"
 osascript -e 'quit app "AeroSpace"' 2>/dev/null || true
 for _ in {1..50}; do pgrep -xq AeroSpace || break; sleep 0.1; done
@@ -126,7 +167,9 @@ if [[ -z "${new_pid:-}" || "$new_pid" == "$old_pid" ]]; then
   exit 1
 fi
 if [[ -n "${regrant:-}" ]]; then
-  echo "installed $APP — grant Accessibility to AeroSpace when macOS asks"
+  echo "installed $APP — grant Accessibility to AeroSpace when macOS asks,"
+  echo "then run: $0 --restore   (puts windows back on their workspaces)"
 else
-  echo "installed $APP (Accessibility grant kept)"
+  restore_layout
+  echo "installed $APP (Accessibility grant kept, window arrangement restored)"
 fi
