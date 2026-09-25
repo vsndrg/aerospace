@@ -13,7 +13,9 @@ after-startup-command = [
     # so it won't be run twice on AeroSpace restart
     'exec-and-forget /opt/homebrew/opt/sketchybar/bin/sketchybar',
     # 'exec-and-forget /opt/homebrew/opt/borders/bin/borders active_color="solid(0xff8ec8ff)" inactive_color=0x202b3a6e width=6.0'
-    'exec-and-forget /opt/homebrew/opt/borders/bin/borders active_color="glow(0xff8ec8ff)" inactive_color=0x202b3a6e width=6.0'
+    # patched build (~/.config/borders/build.sh); colors come from
+    # ~/.config/borders/bordersrc (follows the sketchybar theme)
+    'exec-and-forget ~/.local/bin/borders'
 ]
 
 exec-on-workspace-change = [
@@ -31,6 +33,9 @@ start-at-login = true
 enable-normalization-flatten-containers = false
 enable-normalization-opposite-orientation-for-nested-containers = false
 
+# Keep the sketchybar workspace icons in sync when windows move between workspaces
+on-focus-changed = ['exec-and-forget /opt/homebrew/opt/sketchybar/bin/sketchybar --trigger aerospace_focus_change']
+
 # Mouse follows focus when focused monitor changes
 on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
 
@@ -42,7 +47,7 @@ on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
     # cmd-g = 'exec-and-forget open -a Goodnotes'
 
     cmd-shift-b = 'exec-and-forget ~/.config/aerospace/toggle_sketchybar.sh'
-    cmd-alt-z   = 'exec-and-forget ~/.config/sketchybar/helpers/zen_toggle.sh'
+    cmd-alt-t   = 'exec-and-forget /opt/homebrew/opt/sketchybar/bin/sketchybar --trigger theme_menu'
 
     # i3 wraps focus by default
     cmd-j =         'focus --boundaries-action wrap-around-the-workspace left'
