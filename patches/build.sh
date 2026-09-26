@@ -8,9 +8,11 @@
 # hidden before the new ones arrived) or the wrong window on top for a frame.
 # The patch raises + places the target window before anything else is queued
 # (and, in accordion layouts, lets its app finish that before the siblings are
-# placed, ≤100ms), and hides the old windows only once the new ones are in
-# place (≤150ms) — bottom-up where they overlap, so no lower window is ever
-# revealed (≤80ms).
+# placed, ≤100ms), and hides the old windows only once WindowServer shows the
+# focused new window in place (polled, ≤150ms; the other new windows sit below
+# the old ones anyway, so waiting for them only left the old window showing
+# next to the new one) — bottom-up where they overlap, so no lower window is
+# ever revealed (≤80ms).
 #
 # monitors.patch: a hidden empty workspace belongs to the main monitor (so
 # `workspace N` for a workspace the bar doesn't show opens it there), and a

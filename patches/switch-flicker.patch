@@ -1,5 +1,5 @@
 diff --git a/Sources/AppBundle/layout/refresh.swift b/Sources/AppBundle/layout/refresh.swift
-index 56603a90..7eec0ab1 100644
+index 56603a90..e9efb229 100644
 --- a/Sources/AppBundle/layout/refresh.swift
 +++ b/Sources/AppBundle/layout/refresh.swift
 @@ -68,12 +68,24 @@ func runLightSession<T>(
@@ -49,22 +49,21 @@ index 56603a90..7eec0ab1 100644
      if !TrayMenuModel.shared.isEnabled {
          for workspace in Workspace.all {
              workspace.allLeafWindowsRecursive.forEach { ($0 as! MacWindow).unhideFromCorner() } // todo as!
-@@ -181,10 +203,71 @@ private func layoutWorkspaces() async throws {
+@@ -181,10 +203,87 @@ private func layoutWorkspaces() async throws {
          workspace.allLeafWindowsRecursive.forEach { ($0 as! MacWindow).unhideFromCorner() } // todo as!
          try await workspace.layoutWorkspace()
      }
 +    // Patch (flicker): the moves above run asynchronously on each app's own
 +    // thread, so hiding right away can reveal an empty desktop for a frame.
-+    // Wait (bounded) until the newly visible windows are actually in place.
++    // Wait (bounded) until the focused window is actually on screen. Only it:
++    // it is the one raised above the old windows. The other new windows sit
++    // BELOW the old ones until those are hidden, so waiting for them (a slow
++    // app: 200-300 ms) only kept the old window on screen next to the new ones.
++    // On screen = what WindowServer shows, not the app's AX queue running dry
++    // (an app may still be busy with a later resize of a window long in place).
 +    let pendingHide = Workspace.all.contains { !$0.isVisible && $0.allLeafWindowsRecursive.contains { !$0.isHiddenInCorner } }
-+    if pendingHide {
-+        var apps: [MacApp] = []
-+        for monitor in monitors {
-+            for window in monitor.activeWorkspace.allLeafWindowsRecursive {
-+                if let app = (window as? MacWindow)?.macApp, !apps.contains(where: { $0 === app }) { apps.append(app) }
-+            }
-+        }
-+        await drainAxQueues(apps, timeoutMs: 150)
++    if pendingHide, let focused = focus.windowOrNil as? MacWindow, let workspace = focused.nodeWorkspace, workspace.isVisible {
++        await waitOnScreen(focused.windowId, workspace.workspaceMonitor.rect, timeoutMs: 150)
 +        if superseded() { return }
 +    }
      for workspace in Workspace.all where !workspace.isVisible {
@@ -97,6 +96,23 @@ index 56603a90..7eec0ab1 100644
 +                try await (window as! MacWindow).hideInCorner(corner) // todo as!
 +            }
 +        }
++    }
++}
++
++/// Patch (flicker): waits until WindowServer shows the window on the given
++/// monitor (its center inside; a window hidden in a corner sticks out of it),
++/// polling every 4 ms, or the timeout hits.
++@MainActor
++private func waitOnScreen(_ windowId: UInt32, _ monitor: Rect, timeoutMs: UInt64) async {
++    let deadline = DispatchTime.now().uptimeNanoseconds + timeoutMs * 1_000_000
++    var id = UnsafeRawPointer(bitPattern: UInt(windowId))
++    guard let ids = CFArrayCreate(nil, &id, 1, nil) else { return }
++    while DispatchTime.now().uptimeNanoseconds < deadline {
++        guard let info = CGWindowListCreateDescriptionFromArray(ids) as? [[String: Any]],
++              let dict = info.first?[kCGWindowBounds as String] as? NSDictionary,
++              let bounds = CGRect(dictionaryRepresentation: dict) else { return } // unknown: don't wait
++        if monitor.contains(CGPoint(x: bounds.midX, y: bounds.midY)) { return }
++        try? await Task.sleep(nanoseconds: 4_000_000)
 +    }
 +}
 +
