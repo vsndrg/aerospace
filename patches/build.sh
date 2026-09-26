@@ -16,6 +16,11 @@
 # `workspace N` for a workspace the bar doesn't show opens it there), and a
 # monitor that reconnects shows the workspace it showed before.
 #
+# queries.patch: `list-*` answer straight from the model instead of running a
+# whole session (layout of every workspace + AX poll of every app) per query;
+# the bar asks a few times per workspace switch. `list-windows` fetches window
+# titles (an AX call per window) only when the format uses them.
+#
 # Signing uses the local "aerospace-local-codesign" certificate (login
 # keychain, trusted for code signing), so the Accessibility grant survives
 # rebuilds. Without it the build falls back to ad-hoc signing, and macOS asks

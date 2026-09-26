@@ -1,0 +1,60 @@
+diff --git a/Sources/AppBundle/command/impl/ListWindowsCommand.swift b/Sources/AppBundle/command/impl/ListWindowsCommand.swift
+index c5c73e8d..54a532d5 100644
+--- a/Sources/AppBundle/command/impl/ListWindowsCommand.swift
++++ b/Sources/AppBundle/command/impl/ListWindowsCommand.swift
+@@ -45,8 +45,11 @@ struct ListWindowsCommand: Command {
+             return io.out("\(windows.count)")
+         } else {
+             var _list: [(window: Window, title: String)] = [] // todo cleanup
++            // Patch (queries): a title is an AX call queued behind whatever that app's
++            // thread is doing (e.g. moving windows mid-switch); skip it when unused.
++            let needsTitle = args.format.contains(.interVar(FormatVar.WindowFormatVar.windowTitle.rawValue))
+             for window in windows {
+-                _list.append((window, try await window.title))
++                _list.append((window, needsTitle ? try await window.title : ""))
+             }
+             _list = _list.filter { $0.window.isBound }
+             _list = _list.sortedBy([{ $0.window.app.name ?? "" }, \.title])
+diff --git a/Sources/AppBundle/server.swift b/Sources/AppBundle/server.swift
+index 329123aa..476f0b7d 100644
+--- a/Sources/AppBundle/server.swift
++++ b/Sources/AppBundle/server.swift
+@@ -92,7 +92,25 @@ private func newConnection(_ socket: Socket) async { // todo add exit codes
+         }
+         if let command {
+             let _answer: Result<ServerAnswer, Error> = await Task { @MainActor in
+-                try await runLightSession(.socketServer, token) { () throws in
++                // Patch (queries): `list-*` only read the model, which every session
++                // leaves consistent. A session per query (the bar asks a few times per
++                // workspace switch) re-laid out every workspace, polled every app over
++                // AX and waited behind the switch's own session on the main actor.
++                if command.isReadOnlyQuery {
++                    let io = CmdIo(stdin: CmdStdin(request.stdin))
++                    let env = CmdEnv.init(
++                        windowId: request.windowId.flatMap { $0 },
++                        workspaceName: request.workspace.flatMap { $0 },
++                    )
++                    let isSucc = try await command.run(env, io)
++                    return ServerAnswer(
++                        exitCode: isSucc ? 0 : 1,
++                        stdout: io.stdout.joined(separator: "\n"),
++                        stderr: io.stderr.joined(separator: "\n"),
++                        serverVersionAndHash: serverVersionAndHash,
++                    )
++                }
++                return try await runLightSession(.socketServer, token) { () throws in
+                     let env = CmdEnv.init(
+                         windowId: request.windowId.flatMap { $0 },
+                         workspaceName: request.workspace.flatMap { $0 },
+@@ -121,3 +139,11 @@ private func newConnection(_ socket: Socket) async { // todo add exit codes
+         die("Unreachable")
+     }
+ }
++
++extension Command {
++    /// Patch (queries): commands that never change anything.
++    var isReadOnlyQuery: Bool {
++        self is ListWorkspacesCommand || self is ListWindowsCommand || self is ListMonitorsCommand ||
++            self is ListAppsCommand || self is ListModesCommand
++    }
++}
