@@ -17,6 +17,10 @@
 # place (≤150ms) — bottom-up where they overlap, so no lower window is ever
 # revealed (≤80ms).
 #
+# menu-bar.patch: a monitor's usable area ignores the menu bar (only the notch
+# strip and the Dock count), so windows stay put when `vsndbar toggle` shows
+# the system menu bar instead of the glass bar (gaps.outer.top clears it).
+#
 # monitors.patch: a hidden empty workspace belongs to the main monitor (so
 # `workspace N` for a workspace the bar doesn't show opens it there), and a
 # monitor that reconnects shows the workspace it showed before.
