@@ -1,0 +1,172 @@
+diff --git a/Sources/AppBundle/barState.swift b/Sources/AppBundle/barState.swift
+new file mode 100644
+index 00000000..1f37204e
+--- /dev/null
++++ b/Sources/AppBundle/barState.swift
+@@ -0,0 +1,134 @@
++import AppKit
++import Common
++
++// Patch (bar-state): pushes what the bar shows (every workspace with its
++// monitor, visibility, focus and apps) to subscribers, one JSON line per change.
++// The bar keeps a connection open to /tmp/bobko.aerospace-$USER-bar.sock and
++// gets the current state on connect, then every change as the model commits it:
++// no process per event (exec-on-workspace-change + a CLI query per update).
++
++private struct BarWorkspace: Encodable {
++    let name: String
++    let monitor: Int // NSScreen index, 1-based (monitor-appkit-nsscreen-screens-id)
++    let visible: Bool
++    let apps: [String] // bundle ids, once each, ordered like list-windows (by app name)
++}
++
++private struct BarSnapshot: Encodable {
++    let focused: String
++    let workspaces: [BarWorkspace]
++}
++
++/// Called whenever the model may have changed; cheap when nothing did (and a
++/// no-op without subscribers).
++@MainActor
++func publishBarState() {
++    guard barStateServer.hasClients else { return }
++    let workspaces = Workspace.all.map { ws -> BarWorkspace in
++        var seen = Set<String>()
++        let apps = ws.allLeafWindowsRecursive.filter(\.isBound)
++            .sorted { ($0.app.name ?? "") < ($1.app.name ?? "") }
++            .compactMap { $0.app.rawAppBundleId }
++            .filter { seen.insert($0).inserted }
++        return BarWorkspace(name: ws.name, monitor: ws.workspaceMonitor.monitorAppKitNsScreenScreensId, visible: ws.isVisible, apps: apps)
++    }
++    let snapshot = BarSnapshot(focused: focus.workspace.name, workspaces: workspaces)
++    guard var data = try? JSONEncoder().encode(snapshot) else { return }
++    data.append(0x0A)
++    barStateServer.publish(data)
++}
++
++let barStateServer = BarStateServer()
++
++final class BarStateServer: @unchecked Sendable {
++    private var lock = os_unfair_lock()
++    private var clients: [Int32] = []
++    private var last: Data? // the latest state queued (nil: resend on the next publish)
++    private var pending: Data?
++    private var flushing = false
++    private let queue = DispatchQueue(label: "bar-state")
++
++    var hasClients: Bool {
++        os_unfair_lock_lock(&lock)
++        defer { os_unfair_lock_unlock(&lock) }
++        return !clients.isEmpty
++    }
++
++    func start() {
++        let path = "/tmp/\(aeroSpaceAppId)-\(unixUserName)-bar.sock"
++        unlink(path)
++        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
++        guard fd >= 0 else { return }
++        var addr = sockaddr_un()
++        addr.sun_family = sa_family_t(AF_UNIX)
++        let bytes = Array(path.utf8.prefix(MemoryLayout.size(ofValue: addr.sun_path) - 1))
++        withUnsafeMutableBytes(of: &addr.sun_path) { $0.copyBytes(from: bytes) }
++        let bound = withUnsafePointer(to: &addr) {
++            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
++                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
++            }
++        }
++        guard bound == 0, listen(fd, 4) == 0 else { close(fd); return }
++        Thread.detachNewThread {
++            while true {
++                let client = accept(fd, nil, nil)
++                if client < 0 { continue }
++                var one: Int32 = 1
++                setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
++                os_unfair_lock_lock(&self.lock)
++                self.clients.append(client)
++                self.last = nil
++                os_unfair_lock_unlock(&self.lock)
++                Task { @MainActor in publishBarState() }
++            }
++        }
++    }
++
++    /// Only the newest state is kept: a slow reader skips intermediate ones.
++    func publish(_ data: Data) {
++        os_unfair_lock_lock(&lock)
++        defer { os_unfair_lock_unlock(&lock) }
++        if data == last { return }
++        last = data
++        pending = data
++        if !flushing {
++            flushing = true
++            queue.async { self.flush() }
++        }
++    }
++
++    private func flush() {
++        while true {
++            os_unfair_lock_lock(&lock)
++            guard let data = pending else {
++                flushing = false
++                os_unfair_lock_unlock(&lock)
++                return
++            }
++            pending = nil
++            let targets = clients
++            os_unfair_lock_unlock(&lock)
++            var dead: [Int32] = []
++            for fd in targets where !write(fd, data) { dead.append(fd) }
++            if !dead.isEmpty {
++                dead.forEach { close($0) }
++                os_unfair_lock_lock(&lock)
++                clients.removeAll { dead.contains($0) }
++                os_unfair_lock_unlock(&lock)
++            }
++        }
++    }
++
++    private func write(_ fd: Int32, _ data: Data) -> Bool {
++        data.withUnsafeBytes { buf in
++            var off = 0
++            while off < buf.count {
++                let n = Darwin.write(fd, buf.baseAddress! + off, buf.count - off)
++                if n < 0 && errno == EINTR { continue }
++                if n <= 0 { return false }
++                off += n
++            }
++            return true
++        }
++    }
++}
+diff --git a/Sources/AppBundle/initAppBundle.swift b/Sources/AppBundle/initAppBundle.swift
+index 7a165b07..db06e78b 100644
+--- a/Sources/AppBundle/initAppBundle.swift
++++ b/Sources/AppBundle/initAppBundle.swift
+@@ -27,6 +27,7 @@ import Foundation
+ 
+         checkAccessibilityPermissions()
+         startUnixSocketServer()
++        barStateServer.start() // Patch (bar-state)
+         GlobalObserver.initObserver()
+         Workspace.garbageCollectUnusedWorkspaces() // init workspaces
+         _ = Workspace.all.first?.focusWorkspace()
+diff --git a/Sources/AppBundle/layout/refresh.swift b/Sources/AppBundle/layout/refresh.swift
+index 56603a90..562bf7bc 100644
+--- a/Sources/AppBundle/layout/refresh.swift
++++ b/Sources/AppBundle/layout/refresh.swift
+@@ -41,6 +41,7 @@ func runRefreshSessionBlocking(
+             SecureInputPanel.shared.refresh()
+             try await normalizeLayoutReason()
+             if shouldLayoutWorkspaces { try await layoutWorkspaces() }
++            publishBarState() // Patch (bar-state): windows found / gone, monitors changed
+         }
+     }
+ }
+@@ -105,6 +106,7 @@ func refreshModel() {
+     Workspace.garbageCollectUnusedWorkspaces()
+     checkOnFocusChangedCallbacks()
+     normalizeContainers()
++    publishBarState() // Patch (bar-state): as soon as a command changed the model
+ }
+ 
+ @MainActor

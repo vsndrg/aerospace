@@ -8,15 +8,9 @@ after-login-command = []
 # You can use it to add commands that run after AeroSpace startup.
 # 'after-startup-command' is run after 'after-login-command'
 # Available commands : https://nikitabobko.github.io/AeroSpace/commands
-after-startup-command = [
-    'exec-and-forget /opt/homebrew/opt/sketchybar/bin/sketchybar',
-]
-
-exec-on-workspace-change = [
-    '/bin/bash',
-    '-c',
-    '/opt/homebrew/opt/sketchybar/bin/sketchybar --trigger aerospace_workspace_change AEROSPACE_FOCUSED_WORKSPACE=$AEROSPACE_FOCUSED_WORKSPACE AEROSPACE_PREV_WORKSPACE=$AEROSPACE_PREV_WORKSPACE',
-]
+# The bar (~/.config/vsndbar) is a LaunchAgent and gets workspace changes
+# pushed over a socket (patches/bar-state.patch): no hooks for it here.
+after-startup-command = []
 
 # Start AeroSpace at login
 start-at-login = true
@@ -26,9 +20,6 @@ start-at-login = true
 # Give normalizations a chance and enable them back.
 enable-normalization-flatten-containers = false
 enable-normalization-opposite-orientation-for-nested-containers = false
-
-# Keep the sketchybar workspace icons in sync when windows move between workspaces
-on-focus-changed = ['exec-and-forget /opt/homebrew/opt/sketchybar/bin/sketchybar --trigger aerospace_focus_change']
 
 # Mouse follows focus when focused monitor changes
 # Checked asynchronously, i.e. after the whole binding: a binding that passes
@@ -42,8 +33,7 @@ on-focused-monitor-changed = ['exec-and-forget /opt/homebrew/bin/aerospace move-
     cmd-b = 'exec-and-forget ~/.config/aerospace/open_chrome.sh'
     # cmd-g = 'exec-and-forget open -a Goodnotes'
 
-    cmd-shift-b = 'exec-and-forget ~/.config/aerospace/toggle_sketchybar.sh'
-    cmd-alt-t   = 'exec-and-forget /opt/homebrew/opt/sketchybar/bin/sketchybar --trigger theme_menu'
+    cmd-shift-b = 'exec-and-forget ~/.local/bin/vsndbar toggle'
 
     # i3 wraps focus by default
     cmd-j =         'focus --boundaries-action wrap-around-the-workspace left'
@@ -145,7 +135,7 @@ on-focused-monitor-changed = ['exec-and-forget /opt/homebrew/bin/aerospace move-
     inner.vertical =   6
     outer.left =       6
     outer.bottom =     5  # AeroSpace lays windows out 1pt short (a macOS workaround), so 5 reads as 6
-    # One 6pt gap everywhere (sketchybar config.lua bar.gap): screen edge →
+    # One 6pt gap everywhere (vsndbar Config.gap): screen edge →
     # bar island → window → window → edge. Islands hang 6pt from the top and
     # end flush with the display's bar strip: the 32pt notch strip on the
     # built-in display (already outside the usable area there), the 30pt menu

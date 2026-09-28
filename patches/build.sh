@@ -2,6 +2,11 @@
 # Builds AeroSpace with patches/*.patch applied; with --install, swaps it into
 # /Applications/AeroSpace.app (the original bundle is backed up first).
 #
+# bar-state.patch: pushes what the bar shows (workspaces with their monitor,
+# visibility, focus and apps) to ~/.config/vsndbar over
+# /tmp/bobko.aerospace-$USER-bar.sock: the current state on connect, then one
+# JSON line per model change — no process per event.
+#
 # switch-flicker.patch: on a workspace switch AeroSpace moves every window via
 # the accessibility API, asynchronously on one thread per app, and raises the
 # focused window last. So a switch could show an empty desktop (old windows
