@@ -21,6 +21,12 @@
 # the bar asks a few times per workspace switch. `list-windows` fetches window
 # titles (an AX call per window) only when the format uses them.
 #
+# window-hiding.patch: AeroSpace hides windows in a bottom corner of their
+# monitor, so with a monitor right below (an iPad above the laptop) hidden
+# windows showed up on it. The patch picks the corner (bottom or top — beside
+# the monitor, top aligned) where a hidden window covers the least of the other
+# monitors.
+#
 # Signing uses the local "aerospace-local-codesign" certificate (login
 # keychain, trusted for code signing), so the Accessibility grant survives
 # rebuilds. Without it the build falls back to ad-hoc signing, and macOS asks
@@ -51,9 +57,15 @@ save_layout() {
 
 restore_layout() {
   [[ -s "$LAYOUT_SNAPSHOT" ]] || return 0
-  # wait until the server answers and sees windows (needs Accessibility)
+  # wait until the server answers and sees the snapshot's windows (needs
+  # Accessibility); it finds apps' windows one by one, so the first window
+  # isn't enough (the rest stayed on the focused workspace). ≤10s: windows
+  # closed meanwhile never show up.
+  local want known
+  want="$(awk '$1 ~ /^[0-9]+$/ {print $1}' "$LAYOUT_SNAPSHOT" | sort)"
   for _ in {1..40}; do
-    [[ -n "$(aerospace list-windows --all --format '%{window-id}' 2>/dev/null)" ]] && break
+    known="$(aerospace list-windows --all --format '%{window-id}' 2>/dev/null | sort)"
+    [[ -n "$known" && -z "$(comm -23 <(echo "$want") <(echo "$known"))" ]] && break
     sleep 0.25
   done
   local focus_ws="" focus_win="" id ws layout visible=()

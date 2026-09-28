@@ -1,0 +1,115 @@
+diff --git a/Sources/AppBundle/layout/refresh.swift b/Sources/AppBundle/layout/refresh.swift
+index 7eec0ab1..2ce45716 100644
+--- a/Sources/AppBundle/layout/refresh.swift
++++ b/Sources/AppBundle/layout/refresh.swift
+@@ -148,8 +148,22 @@ func refreshObs(_ obs: AXObserver, ax: AXUIElement, notif: CFString, data: Unsaf
+     }
+ }
+ 
+-enum OptimalHideCorner {
+-    case bottomLeftCorner, bottomRightCorner
++// Patch (hide corner): the top corners hide a window beside the monitor, top
++// aligned with its visible area, for a monitor with another one right below it.
++// Case order = preference on a tie.
++enum OptimalHideCorner: CaseIterable {
++    case bottomRightCorner, bottomLeftCorner, topRightCorner, topLeftCorner
++
++    /// Top-left point of a window of `size` hidden in this corner of `rect`,
++    /// with `offset` points of it left inside `rect`
++    func hiddenTopLeft(in rect: Rect, size: CGSize, offset: CGFloat) -> CGPoint {
++        switch self {
++            case .bottomRightCorner: CGPoint(x: rect.maxX - offset, y: rect.maxY - offset)
++            case .bottomLeftCorner: CGPoint(x: rect.minX - size.width + offset, y: rect.maxY - offset)
++            case .topRightCorner: CGPoint(x: rect.maxX - offset, y: rect.minY)
++            case .topLeftCorner: CGPoint(x: rect.minX - size.width + offset, y: rect.minY)
++        }
++    }
+ }
+ 
+ // Patch (flicker): the waits added below let layout passes interleave (every
+@@ -173,28 +187,24 @@ private func layoutWorkspaces() async throws {
+     }
+     let monitors = monitors
+     var monitorToOptimalHideCorner: [CGPoint: OptimalHideCorner] = [:]
++    // Patch (hide corner): upstream picks one of the bottom corners by probing
++    // for neighbours next to them, so a monitor with another one below it (an
++    // iPad above the laptop) hides its windows onto that monitor either way.
++    // Pick the corner where a hidden window the size of the monitor's visible
++    // area covers the least of the other monitors (area, 1pt left inside).
+     for monitor in monitors {
+-        let xOff = monitor.width * 0.1
+-        let yOff = monitor.height * 0.1
+-        // brc = bottomRightCorner
+-        let brc1 = monitor.rect.bottomRightCorner + CGPoint(x: 2, y: -yOff)
+-        let brc2 = monitor.rect.bottomRightCorner + CGPoint(x: -xOff, y: 2)
+-        let brc3 = monitor.rect.bottomRightCorner + CGPoint(x: 2, y: 2)
+-
+-        // blc = bottomLeftCorner
+-        let blc1 = monitor.rect.bottomLeftCorner + CGPoint(x: -2, y: -yOff)
+-        let blc2 = monitor.rect.bottomLeftCorner + CGPoint(x: xOff, y: 2)
+-        let blc3 = monitor.rect.bottomLeftCorner + CGPoint(x: -2, y: 2)
+-
+-        func contains(_ monitor: Monitor, _ point: CGPoint) -> Int { monitor.rect.contains(point) ? 1 : 0 }
+-        let important = 10
+-
+-        let corner: OptimalHideCorner =
+-            monitors.sumOfInt { contains($0, blc1) + contains($0, blc2) + important * contains($0, blc3) } <
+-            monitors.sumOfInt { contains($0, brc1) + contains($0, brc2) + important * contains($0, brc3) }
+-            ? .bottomLeftCorner
+-            : .bottomRightCorner
+-        monitorToOptimalHideCorner[monitor.rect.topLeftCorner] = corner
++        let area = monitor.visibleRect
++        let others = monitors.filter { $0.rect.topLeftCorner != monitor.rect.topLeftCorner }
++            .map { CGRect(x: $0.rect.minX, y: $0.rect.minY, width: $0.rect.width, height: $0.rect.height) }
++        func covered(_ corner: OptimalHideCorner) -> CGFloat {
++            let hidden = CGRect(origin: corner.hiddenTopLeft(in: area, size: area.size, offset: 1), size: area.size)
++            return others.reduce(0) { sum, other in
++                let common = hidden.intersection(other)
++                return common.isNull ? sum : sum + common.width * common.height
++            }
++        }
++        let covering = OptimalHideCorner.allCases.map { ($0, covered($0)) }
++        monitorToOptimalHideCorner[monitor.rect.topLeftCorner] = covering.min(by: { $0.1 < $1.1 })!.0
+     }
+ 
+     // to reduce flicker, first unhide visible workspaces, then hide invisible ones
+diff --git a/Sources/AppBundle/tree/MacWindow.swift b/Sources/AppBundle/tree/MacWindow.swift
+index 36cd6d5d..9a33bc22 100644
+--- a/Sources/AppBundle/tree/MacWindow.swift
++++ b/Sources/AppBundle/tree/MacWindow.swift
+@@ -137,21 +137,21 @@ final class MacWindow: Window {
+                     CGPoint(x: absolutePoint.x / monitorRect.width, y: absolutePoint.y / monitorRect.height)
+             }
+         }
+-        let p: CGPoint
+-        switch corner {
+-            case .bottomLeftCorner:
+-                guard let s = try await getAxSize() else { fallthrough }
+-                // Zoom will jump off if you do one pixel offset https://github.com/nikitabobko/AeroSpace/issues/527
+-                // todo this ad hoc won't be necessary once I implement optimization suggested by Zalim
+-                let onePixelOffset = macApp.appId == .zoom ? .zero : CGPoint(x: 1, y: -1)
+-                p = nodeMonitor.visibleRect.bottomLeftCorner + onePixelOffset + CGPoint(x: -s.width, y: 0)
+-            case .bottomRightCorner:
+-                // Zoom will jump off if you do one pixel offset https://github.com/nikitabobko/AeroSpace/issues/527
+-                // todo this ad hoc won't be necessary once I implement optimization suggested by Zalim
+-                let onePixelOffset = macApp.appId == .zoom ? .zero : CGPoint(x: 1, y: 1)
+-                p = nodeMonitor.visibleRect.bottomRightCorner - onePixelOffset
++        var corner = corner
++        // Zoom will jump off if you do one pixel offset https://github.com/nikitabobko/AeroSpace/issues/527
++        // todo this ad hoc won't be necessary once I implement optimization suggested by Zalim
++        // Patch (hide corner): beside a monitor (top corners) macOS pulls a window
++        // with no offset back 40pt into it, so Zoom keeps the offset there.
++        let offset: CGFloat = macApp.appId == .zoom && (corner == .bottomLeftCorner || corner == .bottomRightCorner) ? 0 : 1
++        var size = CGSize.zero
++        if corner == .bottomLeftCorner || corner == .topLeftCorner {
++            if let s = try await getAxSize() {
++                size = s
++            } else {
++                corner = corner == .bottomLeftCorner ? .bottomRightCorner : .topRightCorner
++            }
+         }
+-        setAxFrame(p, nil)
++        setAxFrame(corner.hiddenTopLeft(in: nodeMonitor.visibleRect, size: size, offset: offset), nil)
+     }
+ 
+     /// Move a hidden tiling window straight to its last layout rect, before the
