@@ -17,6 +17,10 @@
 # place (≤150ms) — bottom-up where they overlap, so no lower window is ever
 # revealed (≤80ms).
 #
+# back-and-forth.patch: `workspace --auto-back-and-forth N` pressed on N goes
+# back to the previously focused workspace only if it still exists (upstream
+# re-creates an empty one that was garbage collected).
+#
 # menu-bar.patch: a monitor's usable area ignores the menu bar (only the notch
 # strip and the Dock count), so windows stay put when `vsndbar toggle` shows
 # the system menu bar instead of the glass bar (gaps.outer.top clears it).

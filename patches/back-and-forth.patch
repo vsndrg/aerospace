@@ -1,0 +1,16 @@
+diff --git a/Sources/AppBundle/command/impl/WorkspaceBackAndForthCommand.swift b/Sources/AppBundle/command/impl/WorkspaceBackAndForthCommand.swift
+index f6a6e105..a9077853 100644
+--- a/Sources/AppBundle/command/impl/WorkspaceBackAndForthCommand.swift
++++ b/Sources/AppBundle/command/impl/WorkspaceBackAndForthCommand.swift
+@@ -6,6 +6,10 @@ struct WorkspaceBackAndForthCommand: Command {
+     /*conforms*/ var shouldResetClosedWindowsCache = false
+ 
+     func run(_ env: CmdEnv, _ io: CmdIo) -> Bool {
+-        return prevFocusedWorkspace?.focusWorkspace() != nil
++        // `prevFocusedWorkspace` creates the workspace when it is gone (an empty
++        // one is garbage collected once left): then there is nothing to go back to.
++        guard let name = _prevFocusedWorkspaceName,
++              let prev = Workspace.all.first(where: { $0.name == name }) else { return false }
++        return prev.focusWorkspace()
+     }
+ }
