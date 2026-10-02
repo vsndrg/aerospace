@@ -208,12 +208,16 @@ if [[ "$IDENTITY" == "-" || "$prev_signature" != *"Authority=$IDENTITY"* ]]; the
   tccutil reset Accessibility bobko.aerospace >/dev/null 2>&1 || true
   regrant=1
 fi
-# the first launch can race with the old instance shutting down
+# the first launch can race with the old instance shutting down; a freshly
+# signed binary's first launch also takes a few seconds (seen > 6s)
+new_pid=""
 for _ in 1 2 3; do
-  open "$APP"
-  sleep 2
-  new_pid="$(pgrep -x AeroSpace || true)"
-  [[ -n "$new_pid" && "$new_pid" != "$old_pid" ]] && break
+  open "$APP" || true
+  for _ in {1..50}; do
+    new_pid="$(pgrep -x AeroSpace || true)"
+    [[ -n "$new_pid" && "$new_pid" != "$old_pid" ]] && break 2
+    sleep 0.2
+  done
 done
 if [[ -z "${new_pid:-}" || "$new_pid" == "$old_pid" ]]; then
   echo "installed $APP, but it did not start — open it manually" >&2
