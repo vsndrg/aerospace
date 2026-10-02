@@ -99,7 +99,8 @@ restore_layout() {
     aerospace move-workspace-to-monitor --workspace "$ws" "$monitor" 2>/dev/null || true
     [[ "$is_visible" == true ]] && visible+=("$ws")
   done < "$LAYOUT_SNAPSHOT"
-  for ws in "${visible[@]}"; do aerospace workspace "$ws" 2>/dev/null || true; done
+  # (bash 3.2 calls an empty "${visible[@]}" unbound under set -u)
+  for ws in ${visible[@]+"${visible[@]}"}; do aerospace workspace "$ws" 2>/dev/null || true; done
   [[ -n "$focus_ws" ]] && aerospace workspace "$focus_ws" 2>/dev/null || true
   [[ -n "$focus_win" ]] && aerospace focus --window-id "$focus_win" 2>/dev/null || true
 }
@@ -159,12 +160,17 @@ echo "built $BIN ($VERSION + patches)"
 
 [[ $install == 1 ]] || exit 0
 
-# A bundle signed by upstream is pristine: (re)take the backup from it.
+# A bundle signed by upstream is pristine: (re)take the backup from it, if it
+# is the version being built (the binary is swapped into it).
+bundle_version() { defaults read "$1/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || true; }
 signature="$(codesign -dvv "$APP" 2>&1 || true)"
-if [[ "$signature" == *"Authority=aerospace-codesign-certificate"* ]]; then
+if [[ "$signature" == *"Authority=aerospace-codesign-certificate"* && "$(bundle_version "$APP")" == "$VERSION" ]]; then
   rm -rf "$BACKUP" && cp -R "$APP" "$BACKUP"
 fi
-[[ -d "$BACKUP" ]] || { echo "no pristine AeroSpace.app to build on" >&2; exit 1; }
+if [[ ! -d "$BACKUP" || "$(bundle_version "$BACKUP")" != "$VERSION" ]]; then
+  echo "no pristine AeroSpace.app $VERSION to build on (expected at $BACKUP)" >&2
+  exit 1
+fi
 
 IDENTITY="aerospace-local-codesign"
 if ! security find-identity -v -p codesigning | grep -q "\"$IDENTITY\""; then
