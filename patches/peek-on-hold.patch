@@ -1,0 +1,179 @@
+diff --git a/Sources/AppBundle/config/HotkeyBinding.swift b/Sources/AppBundle/config/HotkeyBinding.swift
+index b60d4cfe..2e5932d8 100644
+--- a/Sources/AppBundle/config/HotkeyBinding.swift
++++ b/Sources/AppBundle/config/HotkeyBinding.swift
+@@ -31,14 +31,18 @@ extension HotKey {
+     let targetBindings = targetMode.flatMap { config.modes[$0] }?.bindings ?? [:]
+     for binding in targetBindings.values where !hotkeys.keys.contains(binding.descriptionWithKeyCode) {
+         hotkeys[binding.descriptionWithKeyCode] = HotKey(key: binding.keyCode, modifiers: binding.modifiers, keyDownHandler: {
++            let held = hotkeyPressed(binding.descriptionWithKeyCode) // Patch (peek-on-hold)
+             Task {
+                 if let activeMode {
+                     try await runLightSession(.hotkeyBinding, .checkServerIsEnabledOrDie()) { () throws in
+-                        _ = try await config.modes[activeMode]?.bindings[binding.descriptionWithKeyCode]?.commands
+-                            .runCmdSeq(.defaultEnv, .emptyStdin)
++                        if let commands = config.modes[activeMode]?.bindings[binding.descriptionWithKeyCode]?.commands {
++                            try await held.run(commands)
++                        }
+                     }
+                 }
+             }
++        }, keyUpHandler: {
++            hotkeyReleased(binding.descriptionWithKeyCode) // Patch (peek-on-hold)
+         })
+     }
+     for (binding, key) in hotkeys {
+diff --git a/Sources/AppBundle/peekOnHold.swift b/Sources/AppBundle/peekOnHold.swift
+new file mode 100644
+index 00000000..2cdeb50f
+--- /dev/null
++++ b/Sources/AppBundle/peekOnHold.swift
+@@ -0,0 +1,105 @@
++import AppKit
++import Common
++
++// Patch (peek-on-hold): a binding with `workspace --peek-on-hold N` shows N
++// only while its key is held. Released after `peekHoldThreshold`, it goes back
++// to where it was: the workspace and its window, what every monitor showed,
++// the mouse (if the focus went to another monitor), and the back-and-forth
++// history, as if the peek never happened. A tap works as before. Another
++// binding pressed meanwhile, or anything else that moves the focus (a click,
++// the bar), keeps what is shown now.
++
++/// How long a key must be held for its release to go back: a shorter press is a tap.
++/// The one place the hold length is set (the config and build.sh refer to it by name).
++let peekHoldThreshold: Duration = .milliseconds(200)
++
++/// The binding whose key went down last, until it goes up.
++@MainActor private var heldBinding: HeldBinding? = nil
++
++@MainActor
++final class HeldBinding {
++    let binding: String
++    let pressedAt = ContinuousClock.now
++    private var origin: PeekOrigin? = nil
++    private var landed: FrozenFocus? = nil
++
++    fileprivate init(_ binding: String) { self.binding = binding }
++
++    /// Runs the binding's commands; for a peek, remembers where to go back to.
++    func run(_ commands: [any Command]) async throws {
++        let isPeek = commands.contains { ($0 as? WorkspaceCommand)?.args.peekOnHold == true }
++        let origin = isPeek ? PeekOrigin.capture() : nil
++        _ = try await commands.runCmdSeq(.defaultEnv, .emptyStdin)
++        if let origin, focus.frozen != origin.focus {
++            self.origin = origin
++            landed = focus.frozen
++        }
++    }
++
++    fileprivate var isPeek: Bool { origin != nil }
++
++    fileprivate func goBack() {
++        // Something else moved the focus while the key was held: stay there.
++        guard let origin, let landed, focus.frozen == landed else { return }
++        for monitor in monitors {
++            guard let name = origin.monitorWorkspaces[monitor.rect.topLeftCorner],
++                  monitor.activeWorkspace.name != name else { continue }
++            let workspace = Workspace.get(byName: name) // re-created if it was empty (garbage collected)
++            if !workspace.isVisible { _ = monitor.setActiveWorkspace(workspace) }
++        }
++        _ = setFocus(to: origin.focus.live)
++        restorePrevVisibleWorkspaces(origin.prevVisibleWorkspaces)
++        refreshModel() // the focus callbacks see the change now, so the history set below stays
++        _prevFocusedWorkspaceName = origin.prevFocusedWorkspaceName
++        prevFocusedWorkspaceDate = origin.prevFocusedWorkspaceDate
++        _prevFocus = origin.prevFocus
++        // on-focused-monitor-changed moved the mouse to the peeked monitor; put it back where it
++        // was (its move-mouse monitor-lazy-center for the way back then finds it in place).
++        if landed.monitorId != origin.focus.monitorId {
++            CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: origin.mouse, mouseButton: .left)?
++                .post(tap: .cghidEventTap)
++        }
++    }
++}
++
++private struct PeekOrigin {
++    let focus: FrozenFocus
++    let monitorWorkspaces: [CGPoint: String]
++    let prevVisibleWorkspaces: [CGPoint: String]
++    let prevFocusedWorkspaceName: String?
++    let prevFocusedWorkspaceDate: Date
++    let prevFocus: FrozenFocus?
++    let mouse: CGPoint
++
++    @MainActor static func capture() -> PeekOrigin {
++        PeekOrigin(
++            focus: AppBundle.focus.frozen,
++            monitorWorkspaces: Dictionary(
++                monitors.map { ($0.rect.topLeftCorner, $0.activeWorkspace.name) },
++                uniquingKeysWith: { first, _ in first },
++            ),
++            prevVisibleWorkspaces: prevVisibleWorkspacesSnapshot(),
++            prevFocusedWorkspaceName: _prevFocusedWorkspaceName,
++            prevFocusedWorkspaceDate: AppBundle.prevFocusedWorkspaceDate,
++            prevFocus: _prevFocus,
++            mouse: mouseLocation,
++        )
++    }
++}
++
++/// Every binding's key down: it is the held one now (a peek held before it is cancelled).
++@MainActor func hotkeyPressed(_ binding: String) -> HeldBinding {
++    let held = HeldBinding(binding)
++    heldBinding = held
++    return held
++}
++
++@MainActor func hotkeyReleased(_ binding: String) {
++    guard let held = heldBinding, held.binding == binding else { return }
++    heldBinding = nil
++    guard held.isPeek, ContinuousClock.now - held.pressedAt >= peekHoldThreshold else { return }
++    guard let token: RunSessionGuard = .isServerEnabled else { return }
++    Task {
++        try await runLightSession(.hotkeyBinding, token) { held.goBack() }
++    }
++}
+diff --git a/Sources/AppBundle/tree/Workspace.swift b/Sources/AppBundle/tree/Workspace.swift
+index 3d4beacd..ef30bfcd 100644
+--- a/Sources/AppBundle/tree/Workspace.swift
++++ b/Sources/AppBundle/tree/Workspace.swift
+@@ -7,6 +7,10 @@ import Common
+ @MainActor private var screenPointToVisibleWorkspace: [CGPoint: Workspace] = [:]
+ @MainActor private var visibleWorkspaceToScreenPoint: [Workspace: CGPoint] = [:]
+ 
++// Patch (peek-on-hold): a peek leaves no trace in what the monitors showed before
++@MainActor func prevVisibleWorkspacesSnapshot() -> [CGPoint: String] { screenPointToPrevVisibleWorkspace }
++@MainActor func restorePrevVisibleWorkspaces(_ snapshot: [CGPoint: String]) { screenPointToPrevVisibleWorkspace = snapshot }
++
+ // The returned workspace must be invisible and it must belong to the requested monitor
+ @MainActor func getStubWorkspace(for monitor: Monitor) -> Workspace {
+     getStubWorkspace(forPoint: monitor.rect.topLeftCorner)
+diff --git a/Sources/Common/cmdArgs/impl/WorkspaceCmdArgs.swift b/Sources/Common/cmdArgs/impl/WorkspaceCmdArgs.swift
+index 08f80d1c..efa4cabf 100644
+--- a/Sources/Common/cmdArgs/impl/WorkspaceCmdArgs.swift
++++ b/Sources/Common/cmdArgs/impl/WorkspaceCmdArgs.swift
+@@ -9,6 +9,7 @@ public struct WorkspaceCmdArgs: CmdArgs {
+             "--auto-back-and-forth": optionalTrueBoolFlag(\._autoBackAndForth),
+             "--wrap-around": optionalTrueBoolFlag(\._wrapAround),
+             "--fail-if-noop": trueBoolFlag(\.failIfNoop),
++            "--peek-on-hold": trueBoolFlag(\.peekOnHold), // Patch (peek-on-hold)
+ 
+             "--stdin": optionalTrueBoolFlag(\.explicitStdinFlag),
+             "--no-stdin": optionalFalseBoolFlag(\.explicitStdinFlag),
+@@ -24,6 +25,7 @@ public struct WorkspaceCmdArgs: CmdArgs {
+     public var target: Lateinit<WorkspaceTarget> = .uninitialized
+     public var _autoBackAndForth: Bool?
+     public var failIfNoop: Bool = false
++    public var peekOnHold: Bool = false // Patch (peek-on-hold): only for a binding, see peekOnHold.swift
+     public var _wrapAround: Bool?
+     public var explicitStdinFlag: Bool? = nil
+ }
+@@ -34,6 +36,7 @@ public func parseWorkspaceCmdArgs(_ args: StrArrSlice) -> ParsedCmd<WorkspaceCmd
+         .filterNot("--auto-back-and-forth is incompatible with \(NextPrev.unionLiteral)") { $0._autoBackAndForth != nil && $0.target.val.isRelatve }
+         .filterNot("--fail-if-noop is incompatible with \(NextPrev.unionLiteral)") { $0.failIfNoop && $0.target.val.isRelatve }
+         .filterNot("--fail-if-noop is incompatible with --auto-back-and-forth") { $0.autoBackAndForth && $0.failIfNoop }
++        .filterNot("--peek-on-hold is incompatible with \(NextPrev.unionLiteral)") { $0.peekOnHold && $0.target.val.isRelatve }
+         .filter("--stdin and --no-stdin require using \(NextPrev.unionLiteral) argument") { ($0.explicitStdinFlag != nil).implies($0.target.val.isRelatve) }
+ }
+ 

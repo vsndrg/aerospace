@@ -19,6 +19,7 @@ Against AeroSpace **0.20.3-Beta** (`6dde91ba`). Details are in the header of [`p
 | `bar-state` | pushes what the bar shows (workspaces, their monitors, apps, focus) over a socket — no process per event |
 | `switch-flicker` | a workspace switch places the new windows before hiding the old ones: no empty desktop or wrong window for a frame |
 | `back-and-forth` | `cmd-N` pressed on N goes back to the previous workspace only if it still exists |
+| `peek-on-hold` | `cmd-N` held shows N only until it is released, then goes back to where it was |
 | `menu-bar` | the usable area ignores the menu bar, so windows stay put when the system menu bar is shown |
 | `monitors` | workspaces remember their monitor: a disconnected monitor's (Sidecar iPad's) workspaces come back to it |
 | `queries` | `list-*` answer straight from the model instead of a full refresh per query |
