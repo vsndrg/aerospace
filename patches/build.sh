@@ -77,7 +77,8 @@ restore_layout() {
   local want known
   want="$(awk '$1 ~ /^[0-9]+$/ {print $1}' "$LAYOUT_SNAPSHOT" | sort)"
   for _ in {1..40}; do
-    known="$(aerospace list-windows --all --format '%{window-id}' 2>/dev/null | sort)"
+    # (fails until the server answers, which must not end the script under set -e)
+    known="$(aerospace list-windows --all --format '%{window-id}' 2>/dev/null | sort || true)"
     [[ -n "$known" && -z "$(comm -23 <(echo "$want") <(echo "$known"))" ]] && break
     sleep 0.25
   done
